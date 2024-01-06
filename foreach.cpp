@@ -92,7 +92,7 @@ int getAbsoluteFilesBySuffix(string directory, queue<string> &filesAbsolutePath,
                     // printf("%s有可写权限\n", absolutePath.c_str());
                     if (endsWith(absolutePath, sufstr))
                     {
-                        cout << "file list push : " << absolutePath << endl;
+                        // cout << "file list push : " << absolutePath << endl;
                         filesAbsolutePath.push(absolutePath);
                     }
                 }
