@@ -263,8 +263,11 @@ void *decOne(void *arg)
     while (1)
     {
         pthread_mutex_lock(&mutex_x);
-        if (wok_file_list.empty())
+        if (wok_file_list.empty()){
+            //释放锁
+            pthread_mutex_unlock(&mutex_x);    
             break;
+        }
         filename = wok_file_list.front();
         wok_file_list.pop();
         pthread_mutex_unlock(&mutex_x);
